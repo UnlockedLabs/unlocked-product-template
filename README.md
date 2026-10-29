@@ -79,12 +79,17 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    ```
 3. **Branch protection on `main`:** copy the template's `protect-main`
    ruleset (PRs with one approval, and the `vet and test`, `golangci-lint`,
-   `conventional` and `pr title` checks):
-   ```sh
+   `conventional` and `pr title` checks), in bash:
+   ```bash
    id=$(gh api repos/UnlockedLabs/unlocked-product-template/rulesets --jq '.[] | select(.name=="protect-main") | .id')
    gh api repos/UnlockedLabs/unlocked-product-template/rulesets/$id \
      --jq '{name, target, enforcement, conditions, rules, bypass_actors}' \
      | gh api -X POST repos/UnlockedLabs/<repo>/rulesets --input -
+   ```
+   `.github/CODEOWNERS` asks `@UnlockedLabs/reviewers` to review every PR, so
+   check the team can write to the repo (`maintain` or `push`):
+   ```sh
+   gh api repos/UnlockedLabs/<repo>/teams --jq '.[] | "\(.slug) \(.permission)"'
    ```
 4. **Release bot:** install the unlocked-release-bot GitHub App on the repo.
    Add the variable `RELEASE_APP_CLIENT_ID` and the secret
