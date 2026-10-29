@@ -82,6 +82,107 @@ In `unlocked-platform`:
 2. Pin the release in each site file (`images.<product>.tag: X.Y.Z`) and
    deploy through the deploy workflow. Only staging may use `latest`.
 
+## Vulnerability alerts in Slack
+
+`govulncheck` checks the code, its dependencies and the Go version against the
+Go vulnerability database. It's a required check on every push, it runs on
+`main` every Monday at 14:00 UTC so new vulnerabilities are caught without a
+push, and it can be run by hand (**Actions → govulncheck → Run workflow**).
+
+When it fails on `main`, it posts one line to Slack: `UnlockedLabs/<repo>:
+govulncheck failed on main.` and a link to the run. Failures on other branches
+don't post; the PR's red check shows them. It posts only if the repo can see a
+secret named `SLACK_WEBHOOK_URL`. It's a secret, not a variable, because anyone
+with the URL can post to the channel. Without it, the run logs a notice and
+posts nothing.
+
+**Still to decide (EN-205):** one organization secret shared by every product
+repo, or a secret per repo, and which channel the alerts go to. Until then,
+repos run without it.
+
+### Get a webhook URL
+
+The URL comes from Slack. GitHub never shows a secret's value again, so it
+can't be copied from core's `SLACK_WEBHOOK_URL`.
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and sign in to the
+   Unlocked workspace.
+2. Open the app that already posts our alerts (core's go to
+   `#unlockedv2-alerts`). If there isn't one, **Create New App → From
+   scratch**, name it (such as "Unlocked CI alerts"), pick the workspace and
+   **Create App**.
+3. **Features → Incoming Webhooks**, and turn on **Activate Incoming
+   Webhooks**.
+4. **Add New Webhook to Workspace**, pick the channel and **Allow**. A
+   workspace admin may have to approve a new app first.
+5. Copy the URL (`https://hooks.slack.com/services/...`). Each URL posts to
+   one channel; a different channel needs a new webhook.
+
+### Give it to the repo
+
+**As an organization secret** (set up once; an org admin does it):
+
+1. Org **Settings → Secrets and variables → Actions → New organization
+   secret**.
+2. Name `SLACK_WEBHOOK_URL`, the URL as the value, **Repository access:
+   Selected repositories**, pick the repos, **Add secret**.
+
+For each new repo after that, open the secret, add the repo under **Repository
+access** and **Save**. Or, with a token that has the `admin:org` scope
+(`gh auth refresh -h github.com -s admin:org`):
+
+```sh
+gh api -X PUT orgs/UnlockedLabs/actions/secrets/SLACK_WEBHOOK_URL/repositories/$(gh api repos/UnlockedLabs/<repo> --jq .id)
+```
+
+Don't use `gh secret set --org ... --repos ...` to add a repo: it replaces the
+secret's whole repo list.
+
+**As a repo secret** (a repo admin does it); `gh` asks for the URL, so it stays
+out of your shell history:
+
+```sh
+gh secret set SLACK_WEBHOOK_URL -R UnlockedLabs/<repo>
+```
+
+Or repo **Settings → Secrets and variables → Actions → New repository secret**.
+
+### Check it
+
+The repo can see the secret if its name is listed by one of these:
+
+```sh
+gh secret list -R UnlockedLabs/<repo>
+gh api repos/UnlockedLabs/<repo>/actions/organization-secrets --jq '.secrets[].name'
+```
+
+The first lists repo secrets, the second organization secrets shared with the
+repo. To check the URL itself, post a test message to its channel:
+
+```sh
+curl --fail -X POST -H 'Content-Type: application/json' --data '{"text":"test from <repo>"}' '<url>'
+```
+
+### Change or revoke the URL
+
+If the URL leaks or the channel changes, remove the webhook in the Slack app's
+**Incoming Webhooks** page (that kills the old URL), add a new one, and update
+the secret. Updating an organization secret updates every repo that uses it.
+
+### When the weekly run stops
+
+GitHub turns off scheduled workflows in a public repo after 60 days with no
+activity. Turn it back on at **Actions → govulncheck → Enable workflow**.
+
+### When the check fails
+
+- **A finding in a dependency:** `go get <module>@<fixed version>`, then
+  `go mod tidy`, in a PR.
+- **A finding in the standard library:** a newer Go patch release fixes it.
+  The check and the image both use the newest patch of the Go version in
+  `go.mod`, so rerun the check once that release is out, and merge something
+  so `main` builds a new image with it.
+
 ## New product checklist
 
 Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
@@ -127,39 +228,10 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    prefix with `gh api repos/UnlockedLabs/<repo>/actions/oidc/customization/sub`
    and the ids with `gh api repos/UnlockedLabs/<repo> --jq '.owner.id, .id'`.
    Then add the role's ARN as the secret `AWS_IAM_ROLE`.
-7. **Vulnerability alerts in Slack:** when `govulncheck` fails on `main`
-   (on a merge, or its Monday run), it posts a link to the run to Slack, if
-   the repo can see a `SLACK_WEBHOOK_URL` secret. Without the secret the check
-   still runs and still blocks PRs; it just doesn't post.
-   - **Give the repo the secret.** If the org already has a
-     `SLACK_WEBHOOK_URL` organization secret, an org admin adds the repo to
-     it: org **Settings → Secrets and variables → Actions →
-     SLACK_WEBHOOK_URL → Repository access**, add `<repo>`, **Save**. Or:
-     ```sh
-     gh api -X PUT orgs/UnlockedLabs/actions/secrets/SLACK_WEBHOOK_URL/repositories/$(gh api repos/UnlockedLabs/<repo> --jq .id)
-     ```
-     If it doesn't, set it on the repo; `gh` asks for the value:
-     ```sh
-     gh secret set SLACK_WEBHOOK_URL -R UnlockedLabs/<repo>
-     ```
-   - **The URL comes from Slack.** GitHub never shows a secret again, so it
-     can't be copied from another repo. In Slack, open the app that posts the
-     alerts at [api.slack.com/apps](https://api.slack.com/apps), then
-     **Incoming Webhooks → Add New Webhook to Workspace**, pick the channel
-     (such as `#unlockedv2-alerts`), and copy the URL. The URL decides the
-     channel.
-   - **Check it.** The repo can see the secret if its name is listed by
-     `gh secret list -R UnlockedLabs/<repo>` (a repo secret) or
-     `gh api repos/UnlockedLabs/<repo>/actions/organization-secrets --jq '.secrets[].name'`
-     (an organization secret). To test the URL itself:
-     ```sh
-     curl --fail -X POST -H 'Content-Type: application/json' --data '{"text":"test from <repo>"}' '<url>'
-     ```
-   - **When it fails:** a finding in a dependency is fixed with
-     `go get <module>@<fixed version>` and `go mod tidy`. A finding in the
-     standard library is fixed by a newer Go patch release: the check and the
-     image both use the newest patch of the Go version in `go.mod`, so it
-     clears once that release is out.
+7. **Vulnerability alerts in Slack:** give the repo the `SLACK_WEBHOOK_URL`
+   secret, as in [Vulnerability alerts in Slack](#vulnerability-alerts-in-slack).
+   Without it, `govulncheck` still runs and still blocks PRs; it just doesn't
+   post to Slack.
 8. **Private Go module?** If other repos import it, set
    `GOPRIVATE=github.com/UnlockedLabs/*` where it's built, and give CI a read
    token.
