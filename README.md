@@ -14,8 +14,8 @@ It gives a product:
   core's. Point the Deployment's readiness probe at it.
 - **Routing under a path prefix:** every route lives under `PATH_PREFIX`, the
   path ingress sends this product's requests to.
-- **CI:** tests and golangci-lint on every push, conventional-commit checks,
-  and an image pushed to ECR from `main` and from each release.
+- **CI:** tests, golangci-lint and govulncheck on every push, conventional-commit
+  checks, and an image pushed to ECR from `main` and from each release.
 - **release-please:** versions and the changelog come from the commit messages.
 
 There's no Kubernetes chart here. Every product's templates live in the
@@ -42,13 +42,14 @@ Settings, all from the environment:
 | Variable | Default | What it does |
 |---|---|---|
 | `ADDR` | `:8080` | Where the API listens |
-| `PATH_PREFIX` | none (root) | The path every route lives under, such as `/example` |
+| `PATH_PREFIX` | none (root) | The path every route lives under, such as `/example` (`example` and `/example/` work too). Between slashes it may have letters, digits, `-`, `.`, `_` and `~`; anything else stops `serve` with an error. |
 | `APP_VERSION`, `GIT_COMMIT`, `GIT_BRANCH` | `unknown` | What `/api/version` reports. CI bakes them into the image. |
 
 ## How to release
 
 1. Merge PRs to `main` with conventional-commit titles (`feat: ...`,
-   `fix: ...`). Each merge pushes `:sha-<short>` and `:latest` to ECR.
+   `fix: ...`). Each merge pushes `:sha-<short>` to ECR, then moves `:latest`
+   to it if it's still the tip of `main`.
 2. release-please keeps a `chore(main): release X.Y.Z` PR open with the
    changelog. A `feat` bumps the minor version, a `fix` the patch (before
    1.0.0, a breaking change bumps the minor version).
@@ -90,15 +91,16 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    credentials, `release-please` has no bot, and GitHub's own "Initial commit"
    isn't a conventional commit. That's expected.
 2. **Rename the module** (Go files only; this README keeps the template's name
-   until step 8 replaces it):
+   until step 9 replaces it). `perl -pi` works the same on Linux and macOS,
+   unlike `sed -i`:
    ```sh
    grep -rl unlocked-product-template --include='*.go' --include=go.mod . \
-     | xargs sed -i 's#unlocked-product-template#<repo>#g'
+     | xargs perl -pi -e 's#unlocked-product-template#<repo>#g'
    ```
 3. **Branch protection on `main`:** copy the template's `protect-main`
    ruleset (PRs with one approval, and the `vet and test`, `golangci-lint`,
-   `conventional` and `pr title` checks). One line, so it works in bash and
-   fish:
+   `govulncheck`, `conventional` and `pr title` checks). One line, so it works
+   in bash and fish:
    ```sh
    gh api repos/UnlockedLabs/unlocked-product-template/rulesets/$(gh api repos/UnlockedLabs/unlocked-product-template/rulesets --jq '.[] | select(.name=="protect-main") | .id') --jq '{name, target, enforcement, conditions, rules, bypass_actors}' | gh api -X POST repos/UnlockedLabs/<repo>/rulesets --input -
    ```
@@ -113,17 +115,55 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    `RELEASE_APP_PRIVATE_KEY`. For a key, open the App's settings, then
    **Credentials → Key pairs → New key**; paste the whole `.pem` and delete
    the file.
-5. **ECR:** create an ECR repository named `<repo>` in `us-west-2`.
+5. **ECR:** create an ECR repository named `<repo>` in `us-west-2`, with
+   mutable tags (the default), since every merge to `main` moves `:latest`:
+   ```sh
+   aws ecr create-repository --repository-name <repo> --region us-west-2 --image-tag-mutability MUTABLE
+   ```
+   In the console, leave **Tag immutability** on **Mutable**.
 6. **AWS access for CI:** add the repo to the trust policy of the
    `GithubActionsBuildPushEcr` role. New repos get the immutable OIDC subject
    `repo:UnlockedLabs@<owner id>/<repo>@<repo id>:*` (EN-187); check the
    prefix with `gh api repos/UnlockedLabs/<repo>/actions/oidc/customization/sub`
    and the ids with `gh api repos/UnlockedLabs/<repo> --jq '.owner.id, .id'`.
    Then add the role's ARN as the secret `AWS_IAM_ROLE`.
-7. **Private Go module?** If other repos import it, set
+7. **Vulnerability alerts in Slack:** when `govulncheck` fails on `main`
+   (on a merge, or its Monday run), it posts a link to the run to Slack, if
+   the repo can see a `SLACK_WEBHOOK_URL` secret. Without the secret the check
+   still runs and still blocks PRs; it just doesn't post.
+   - **Give the repo the secret.** If the org already has a
+     `SLACK_WEBHOOK_URL` organization secret, an org admin adds the repo to
+     it: org **Settings → Secrets and variables → Actions →
+     SLACK_WEBHOOK_URL → Repository access**, add `<repo>`, **Save**. Or:
+     ```sh
+     gh api -X PUT orgs/UnlockedLabs/actions/secrets/SLACK_WEBHOOK_URL/repositories/$(gh api repos/UnlockedLabs/<repo> --jq .id)
+     ```
+     If it doesn't, set it on the repo; `gh` asks for the value:
+     ```sh
+     gh secret set SLACK_WEBHOOK_URL -R UnlockedLabs/<repo>
+     ```
+   - **The URL comes from Slack.** GitHub never shows a secret again, so it
+     can't be copied from another repo. In Slack, open the app that posts the
+     alerts at [api.slack.com/apps](https://api.slack.com/apps), then
+     **Incoming Webhooks → Add New Webhook to Workspace**, pick the channel
+     (such as `#unlockedv2-alerts`), and copy the URL. The URL decides the
+     channel.
+   - **Check it.** The repo can see the secret if its name is listed by
+     `gh secret list -R UnlockedLabs/<repo>` (a repo secret) or
+     `gh api repos/UnlockedLabs/<repo>/actions/organization-secrets --jq '.secrets[].name'`
+     (an organization secret). To test the URL itself:
+     ```sh
+     curl --fail -X POST -H 'Content-Type: application/json' --data '{"text":"test from <repo>"}' '<url>'
+     ```
+   - **When it fails:** a finding in a dependency is fixed with
+     `go get <module>@<fixed version>` and `go mod tidy`. A finding in the
+     standard library is fixed by a newer Go patch release: the check and the
+     image both use the newest patch of the Go version in `go.mod`, so it
+     clears once that release is out.
+8. **Private Go module?** If other repos import it, set
    `GOPRIVATE=github.com/UnlockedLabs/*` where it's built, and give CI a read
    token.
-8. **README:** replace this one with what the product is, how to run it
+9. **README:** replace this one with what the product is, how to run it
    locally, and how to release it.
-9. **Platform:** add its templates and pin its tag, as in
-   [How to deploy](#how-to-deploy).
+10. **Platform:** add its templates and pin its tag, as in
+    [How to deploy](#how-to-deploy).
