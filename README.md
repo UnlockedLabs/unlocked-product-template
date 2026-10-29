@@ -55,6 +55,20 @@ Settings, all from the environment:
 3. Merge that PR when you want a release. It tags `vX.Y.Z`, and CI pushes
    `:X.Y.Z` to ECR.
 
+### Commit types
+
+The `conventional` and `pr title` checks allow these types, and nothing else:
+
+| Type | In the changelog? | Version bump |
+|---|---|---|
+| `feat` | yes | minor |
+| `fix`, `perf`, `revert` | yes | patch |
+| `chore`, `docs`, `style`, `refactor`, `test`, `build`, `ci` | no | none on its own |
+
+A `!` after any type (`feat!:`, `refactor!:`) marks a breaking change: it
+always shows in the changelog and bumps the major version (the minor before
+1.0.0). A scope is optional: `fix(worker): ...`.
+
 ## How to deploy
 
 In `unlocked-platform`:
