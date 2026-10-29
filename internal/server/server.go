@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -33,9 +35,12 @@ func VersionFromEnv() Version {
 
 // NewHandler returns the API's routes, all under prefix: the path ingress
 // sends this product's requests to, such as "/example". An empty prefix
-// serves from the root.
-func NewHandler(prefix string, v Version) http.Handler {
-	prefix = strings.TrimRight(prefix, "/")
+// serves from the root. See cleanPrefix for what prefix may be.
+func NewHandler(prefix string, v Version) (http.Handler, error) {
+	prefix, err := cleanPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
 	mux := http.NewServeMux()
 	// The platform chart's readiness probe. Same path and body as core's.
 	mux.HandleFunc("GET "+prefix+"/api/healthcheck", func(w http.ResponseWriter, r *http.Request) {
@@ -49,20 +54,55 @@ func NewHandler(prefix string, v Version) http.Handler {
 			slog.Error("write version response", "err", err)
 		}
 	})
-	return mux
+	return mux, nil
+}
+
+// prefixSegment is one part of a path prefix: letters, digits and the other
+// characters a URL path never escapes. Anything else could change what the
+// route patterns mean, such as "{" (a wildcard) or a missing leading "/" (a
+// host name).
+var prefixSegment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+
+// cleanPrefix gives prefix one leading "/" and no trailing one, so "example",
+// "/example" and "/example/" all serve under "/example", and "" and "/" serve
+// from the root. A prefix with any other character, an empty part ("//") or a
+// "." or ".." part is an error.
+func cleanPrefix(prefix string) (string, error) {
+	trimmed := strings.Trim(prefix, "/")
+	if trimmed == "" {
+		return "", nil
+	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		if !prefixSegment.MatchString(seg) || seg == "." || seg == ".." {
+			return "", fmt.Errorf("path prefix %q: each part between slashes must be letters, digits, '-', '.', '_' or '~'", prefix)
+		}
+	}
+	return "/" + trimmed, nil
 }
 
 // Serve runs the API on addr until ctx is canceled, then shuts it down,
-// giving requests in flight up to 10 seconds to finish.
+// giving requests in flight up to 10 seconds to finish. A bad prefix or an
+// address it can't listen on is an error before it serves anything.
 func Serve(ctx context.Context, addr, prefix string, v Version) error {
+	prefix, err := cleanPrefix(prefix)
+	if err != nil {
+		return err
+	}
+	handler, err := NewHandler(prefix, v)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           NewHandler(prefix, v),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errs := make(chan error, 1)
-	go func() { errs <- srv.ListenAndServe() }()
-	slog.Info("serving", "addr", addr, "prefix", prefix, "version", v.Version)
+	go func() { errs <- srv.Serve(ln) }()
+	slog.Info("serving", "addr", ln.Addr().String(), "prefix", prefix, "version", v.Version)
 
 	select {
 	case err := <-errs:
