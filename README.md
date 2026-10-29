@@ -71,29 +71,34 @@ In `unlocked-platform`:
 
 Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
 
-1. **Create the repo** from this template under UnlockedLabs.
-2. **Rename the module:**
+1. **Create the repo** from this template under UnlockedLabs. Its first runs
+   fail until steps 4 to 6 are done: `build-and-push` can't get AWS
+   credentials, `release-please` has no bot, and GitHub's own "Initial commit"
+   isn't a conventional commit. That's expected.
+2. **Rename the module** (Go files only; this README keeps the template's name
+   until step 8 replaces it):
    ```sh
-   grep -rl unlocked-product-template --include='*.go' --include=go.mod --include=README.md . \
+   grep -rl unlocked-product-template --include='*.go' --include=go.mod . \
      | xargs sed -i 's#unlocked-product-template#<repo>#g'
    ```
 3. **Branch protection on `main`:** copy the template's `protect-main`
    ruleset (PRs with one approval, and the `vet and test`, `golangci-lint`,
-   `conventional` and `pr title` checks), in bash:
-   ```bash
-   id=$(gh api repos/UnlockedLabs/unlocked-product-template/rulesets --jq '.[] | select(.name=="protect-main") | .id')
-   gh api repos/UnlockedLabs/unlocked-product-template/rulesets/$id \
-     --jq '{name, target, enforcement, conditions, rules, bypass_actors}' \
-     | gh api -X POST repos/UnlockedLabs/<repo>/rulesets --input -
+   `conventional` and `pr title` checks). One line, so it works in bash and
+   fish:
+   ```sh
+   gh api repos/UnlockedLabs/unlocked-product-template/rulesets/$(gh api repos/UnlockedLabs/unlocked-product-template/rulesets --jq '.[] | select(.name=="protect-main") | .id') --jq '{name, target, enforcement, conditions, rules, bypass_actors}' | gh api -X POST repos/UnlockedLabs/<repo>/rulesets --input -
    ```
    `.github/CODEOWNERS` asks `@UnlockedLabs/reviewers` to review every PR, so
    check the team can write to the repo (`maintain` or `push`):
    ```sh
    gh api repos/UnlockedLabs/<repo>/teams --jq '.[] | "\(.slug) \(.permission)"'
    ```
-4. **Release bot:** install the unlocked-release-bot GitHub App on the repo.
-   Add the variable `RELEASE_APP_CLIENT_ID` and the secret
-   `RELEASE_APP_PRIVATE_KEY`.
+4. **Release bot:** install the unlocked-release-bot GitHub App on the repo
+   (the App's **Install App** page, **Configure**, then add the repo). Add the
+   variable `RELEASE_APP_CLIENT_ID` (`Iv23liURFfuC0NzSCm4G`) and the secret
+   `RELEASE_APP_PRIVATE_KEY`. For a key, open the App's settings, then
+   **Credentials → Key pairs → New key**; paste the whole `.pem` and delete
+   the file.
 5. **ECR:** create an ECR repository named `<repo>` in `us-west-2`.
 6. **AWS access for CI:** add the repo to the trust policy of the
    `GithubActionsBuildPushEcr` role. New repos get the immutable OIDC subject
