@@ -58,7 +58,7 @@ Settings, all from the environment:
 
 ### Commit types
 
-The `conventional` and `pr title` checks allow these types, and nothing else:
+The `conventional commits` and `pr title` checks allow these types, and nothing else:
 
 | Type | In the changelog? | Version bump |
 |---|---|---|
@@ -69,6 +69,9 @@ The `conventional` and `pr title` checks allow these types, and nothing else:
 A `!` after any type (`feat!:`, `refactor!:`) marks a breaking change: it
 always shows in the changelog and bumps the major version (the minor before
 1.0.0). A scope is optional: `fix(worker): ...`.
+
+GitHub's **Revert** button writes `Revert "..."`, which the checks reject;
+reword it to `revert: ...` (the failing check prints the exact text).
 
 ## How to deploy
 
@@ -189,8 +192,8 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
 
 1. **Create the repo** from this template under UnlockedLabs. Its first runs
    fail until steps 4 to 6 are done: `build-and-push` can't get AWS
-   credentials, `release-please` has no bot, and GitHub's own "Initial commit"
-   isn't a conventional commit. That's expected.
+   credentials and `release-please` has no bot. That's expected. (GitHub's own
+   "Initial commit" isn't checked: the commit checks run on PRs only.)
 2. **Rename the module** (Go files only; this README keeps the template's name
    until step 9 replaces it). `perl -pi` works the same on Linux and macOS,
    unlike `sed -i`:
@@ -200,7 +203,7 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    ```
 3. **Branch protection on `main`:** copy the template's `protect-main`
    ruleset (PRs with one approval, and the `vet and test`, `golangci-lint`,
-   `govulncheck`, `conventional` and `pr title` checks). One line, so it works
+   `govulncheck`, `conventional commits` and `pr title` checks). One line, so it works
    in bash and fish:
    ```sh
    gh api repos/UnlockedLabs/unlocked-product-template/rulesets/$(gh api repos/UnlockedLabs/unlocked-product-template/rulesets --jq '.[] | select(.name=="protect-main") | .id') --jq '{name, target, enforcement, conditions, rules, bypass_actors}' | gh api -X POST repos/UnlockedLabs/<repo>/rulesets --input -
@@ -239,3 +242,8 @@ Replace `<repo>` with the new repo's name, such as `unlocked-open-content`.
    locally, and how to release it.
 10. **Platform:** add its templates and pin its tag, as in
     [How to deploy](#how-to-deploy).
+11. **CodeRabbit:** an org admin adds the repo under org settings, Installed
+    GitHub Apps, CodeRabbit, Configure. Open a PR to confirm it comments.
+
+The standard every UnlockEd repo follows, and why, is `docs/repo-standard.md`
+in unlocked-core.
