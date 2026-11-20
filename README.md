@@ -49,7 +49,9 @@ Settings, all from the environment:
 
 1. Merge PRs to `main` with conventional-commit titles (`feat: ...`,
    `fix: ...`). Each merge pushes `:sha-<short>` to ECR, then moves `:latest`
-   to it if it's still the tip of `main`.
+   to it if it's still the tip of `main`. It also sets staging's
+   `images.<product>.tag` to `sha-<short>` in `unlocked-platform`, which
+   deploys staging.
 2. release-please keeps a `chore(main): release X.Y.Z` PR open with the
    changelog. A `feat` bumps the minor version, a `fix` the patch (before
    1.0.0, a breaking change bumps the minor version).
@@ -81,9 +83,13 @@ In `unlocked-platform`:
    `components.<product>`: a Deployment for `serve` with a readiness probe on
    `<PATH_PREFIX>/api/healthcheck` (and one for `worker` if it has background
    jobs), a Service, ingress paths for its `PATH_PREFIX`, and a
-   per-revision migrate Job if it has tables.
-2. Pin the release in each site file (`images.<product>.tag: X.Y.Z`) and
-   deploy through the deploy workflow. Only staging may use `latest`.
+   per-revision migrate Job if it has tables. Name the image
+   `images.<product>`, the repo name without `unlocked-` in camelCase
+   (`unlocked-open-content` is `openContent`), and add it to the list of
+   images the deploy workflow lets `unlocked-release-bot` change. CI then
+   keeps staging on `main` (see How to release).
+2. Pin the release in each other site file (`images.<product>.tag: X.Y.Z`)
+   and deploy through the deploy workflow.
 
 ## Vulnerability alerts in Slack
 
