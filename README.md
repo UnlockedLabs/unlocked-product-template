@@ -14,8 +14,9 @@ It gives a product:
   core's. Point the Deployment's readiness probe at it.
 - **Routing under a path prefix:** every route lives under `PATH_PREFIX`, the
   path ingress sends this product's requests to.
-- **CI:** tests, golangci-lint and govulncheck on every push, conventional-commit
-  checks, and an image pushed to ECR from `main` and from each release.
+- **CI:** tests and golangci-lint on every push, govulncheck and
+  conventional-commit checks on every PR, and an image pushed to ECR from
+  `main` and from each release.
 - **release-please:** versions and the changelog come from the commit messages.
 
 There's no Kubernetes chart here. Every product's templates live in the
@@ -94,20 +95,19 @@ In `unlocked-platform`:
 ## Vulnerability alerts in Slack
 
 `govulncheck` checks the code, its dependencies and the Go version against the
-Go vulnerability database. It's a required check on every push, it runs on
-`main` every Monday at 14:00 UTC so new vulnerabilities are caught without a
-push, and it can be run by hand (**Actions → govulncheck → Run workflow**).
+Go vulnerability database on every PR, as unlocked-core's scan does. It's a
+required check, so vulnerabilities block the PR.
 
-When it fails on `main`, it posts one line to Slack: `UnlockedLabs/<repo>:
-govulncheck failed on main.` and a link to the run. Failures on other branches
-don't post; the PR's red check shows them. It posts only if the repo can see a
-secret named `SLACK_WEBHOOK_URL`. It's a secret, not a variable, because anyone
-with the URL can post to the channel. Without it, the run logs a notice and
-posts nothing.
+When it finds vulnerabilities, it posts to #unlockedv2-alerts with the same
+message core sends: the repo, PR, author, branch, the govulncheck output and
+what to do. A scan that couldn't finish (such as a module download error)
+fails the check but doesn't post. It posts only if the repo can see a secret
+named `SLACK_WEBHOOK_URL`. It's a secret, not a variable, because anyone with
+the URL can post to the channel. Without it, the run logs a notice and posts
+nothing.
 
-**Still to decide (EN-205):** one organization secret shared by every product
-repo, or a secret per repo, and which channel the alerts go to. Until then,
-repos run without it.
+The secret is an organization secret shared by the product repos; add each new
+repo to it, as in [Give it to the repo](#give-it-to-the-repo).
 
 ### Get a webhook URL
 
@@ -177,11 +177,6 @@ curl --fail -X POST -H 'Content-Type: application/json' --data '{"text":"test fr
 If the URL leaks or the channel changes, remove the webhook in the Slack app's
 **Incoming Webhooks** page (that kills the old URL), add a new one, and update
 the secret. Updating an organization secret updates every repo that uses it.
-
-### When the weekly run stops
-
-GitHub turns off scheduled workflows in a public repo after 60 days with no
-activity. Turn it back on at **Actions → govulncheck → Enable workflow**.
 
 ### When the check fails
 
